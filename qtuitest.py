@@ -171,14 +171,14 @@ class MainWindow(QMainWindow):
         
         # File menu
         file_menu = menubar.addMenu("File")
-        file_menu.addAction("New", self.file_new)
-        file_menu.addAction("Open", self.file_open)
+        #file_menu.addAction("New", self.file_new)
+        #file_menu.addAction("Open", self.file_open)
         file_menu.addSeparator()
         file_menu.addAction("Import Source VTPs...", self.import_source_vtps)
         file_menu.addAction("Import Event Counts...", self.import_event_counts)
         file_menu.addAction("Import Top LORs...", self.import_top_lors)
         file_menu.addSeparator()
-        file_menu.addAction("Exit", self.close)
+        #file_menu.addAction("Exit", self.close)
         
         # View menu
         view_menu = menubar.addMenu("View")
@@ -186,18 +186,18 @@ class MainWindow(QMainWindow):
         view_menu.addAction("Zoom In", self.view_zoom_in)
         view_menu.addAction("Zoom Out", self.view_zoom_out)
         view_menu.addSeparator()
-        self.z_axis_lock_action = view_menu.addAction("Lock Rotation to Z-Axis")
-        self.z_axis_lock_action.setCheckable(True)
-        self.z_axis_lock_action.triggered.connect(self.toggle_z_axis_lock)
+        #self.z_axis_lock_action = view_menu.addAction("Lock Rotation to Z-Axis")
+        #self.z_axis_lock_action.setCheckable(True)
+        #self.z_axis_lock_action.triggered.connect(self.toggle_z_axis_lock)
         
         # Tools menu
-        tools_menu = menubar.addMenu("Tools")
-        tools_menu.addAction("Tool 1", self.tool_1)
-        tools_menu.addAction("Tool 2", self.tool_2)
+        #tools_menu = menubar.addMenu("Tools")
+        #tools_menu.addAction("Tool 1", self.tool_1)
+        #tools_menu.addAction("Tool 2", self.tool_2)
         
         # Help menu
-        help_menu = menubar.addMenu("Help")
-        help_menu.addAction("About", self.help_about)
+        #help_menu = menubar.addMenu("Help")
+        #help_menu.addAction("About", self.help_about)
         
     def create_sidebar(self):
         """Create sidebar dock widget"""

@@ -25,9 +25,9 @@ def generate_cylinder_mesh(x, y, z, r, h, direction=(0, 0, 1), resolution=64):
         Cylinder mesh.
     """
     # True x, y, z are center minus direction vector times half the height
-    x = x + direction[0] * h / 2
-    y = y + direction[1] * h / 2
-    z = z + direction[2] * h / 2
+    x = x - direction[0] * h / 2
+    y = y - direction[1] * h / 2
+    z = z - direction[2] * h / 2
     # Generate a cylinder mesh
     return pv.Cylinder(center=(x, y, z), direction=direction, radius=r, height=h, resolution=resolution)
 
@@ -60,7 +60,7 @@ def generate_rectangular_prism_mesh(x, y, z, l, w, h):
     ]
     return pv.Box(bounds=bounds)
 
-def generate_derenzo_mesh(x, y, z, r, h, angle = 0, resolution=64):
+#def generate_derenzo_mesh(x, y, z, r, h, angle = 0, resolution=64):
     """
     Create a Derenzo mesh with the top rod centered at (x, y, z).
     The remaining rods are generated at angle specified, 0 angle corresponds to typical top down orientation.
@@ -78,7 +78,7 @@ def generate_derenzo_mesh(x, y, z, r, h, angle = 0, resolution=64):
     resolution : int, optional
         Number of facets around the circumference; higher = smoother.
     """
-    pass
+#    pass
 
 def save_mesh_as_vtp(mesh, filepath):
     """
