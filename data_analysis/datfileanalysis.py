@@ -1,6 +1,13 @@
+'''
+Notes for use:
+ - Place any coinc.dat files in the same directory, it will automatically create the ccounts, lcounts, and toplors files
+ - ccounts.bin - channel counts: counts per channel
+ - lcounts.bin - LOR counts: counts per LOR (not currently used)
+ - toplors.bin - top 1000 LORs to be drawn in TPPTvis
+'''
+
 import pandas as pd
 import numpy as np
-
 import os
 
 # Find all files in the directory ending in .dat
@@ -44,5 +51,6 @@ for i, file_name in enumerate(coinc_dat_files):
     topl_filename = os.path.splitext(file_name)[0] + '_toplors.bin'
     with open(topl_filename, 'wb') as topl_fp:
         toplors[i].tofile(topl_fp)
+
 
 
