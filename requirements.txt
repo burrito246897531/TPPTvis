@@ -1,0 +1,8 @@
+numpy
+pandas
+pyvista
+pyvistaqt
+PySide6
+tqdm
+vtk
+

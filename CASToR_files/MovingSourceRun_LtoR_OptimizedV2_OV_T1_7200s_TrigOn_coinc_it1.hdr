@@ -1,0 +1,55 @@
+!INTERFILE := 
+!imaging modality := PET
+!version of keys := CASToRv3.2.1
+CASToR version := 3.2.1
+
+!GENERAL DATA := 
+!originating system := TPPT
+!data offset in bytes := 0
+!name of data file := MovingSourceRun_LtoR_OptimizedV2_OV_T1_7200s_TrigOn_coinc_it1.img
+patient name := MovingSourceRun_LtoR_OptimizedV2_OV_T1_7200s_TrigOn_coinc_it1
+
+!GENERAL IMAGE DATA 
+!type of data := Dynamic
+!total number of images := 80
+imagedata byte order := LITTLEENDIAN
+!number of frame groups :=1 
+process status := 
+
+!STATIC STUDY (General) :=
+number of dimensions := 3
+!matrix size [1] := 180
+!matrix size [2] := 180
+!matrix size [3] := 80
+!number format := short float
+!number of bytes per pixel := 4
+scaling factor (mm/pixel) [1] := 1.5
+scaling factor (mm/pixel) [2] := 1.5
+scaling factor (mm/pixel) [3] := 1.5
+first pixel offset (mm) [1] := 0
+first pixel offset (mm) [2] := 0
+first pixel offset (mm) [3] := 0
+data rescale offset := 0
+data rescale slope := 1
+quantification units := 1
+!number of images in this frame group := 80
+!image duration (sec) := 60
+!image start time (sec) := 0
+pause between frame groups (sec) := 0
+!END OF INTERFILE := 
+
+!COPY OF INPUT HEADER 1
+Data filename: MovingSourceRun_LtoR_OptimizedV2_OV_T1_7200s_TrigOn_coinc.cdf
+Number of events: 34070949
+Data mode: list-mode
+Data type: PET
+Start time (s):0
+Duration (s): 60
+Scanner name: TPPT
+TOF information flag: 1
+TOF resolution (ps): 20000
+List TOF measurement range (ps): 20000.
+Attenuation correction flag: 0
+Normalization correction flag: 0
+Scatter correction flag: 0
+!END OF COPY OF INPUT HEADER 1
