@@ -16,6 +16,7 @@ try:
                                     QListWidget, QPushButton, QLabel, QTextEdit, 
                                     QListWidgetItem, QScrollArea, QFileDialog, QMessageBox,
                                     QSpinBox)
+    from PySide6.QtGui import QActionGroup
     from PySide6.QtCore import Qt, QTimer
     from pyvistaqt import QtInteractor
     QT_AVAILABLE = True
@@ -155,8 +156,8 @@ class MainWindow(QMainWindow):
             pass  # Instructions label was removed, so this is a no-op
         
         # Load crystal visualization from scannertest with callbacks
-        # This returns (update_event_counts_func, reload_sources_func, set_draw_mode_func, render_top_lors_func, toggle_grid_func)
-        self.update_event_counts_func, self.reload_sources_func, self.set_draw_mode_func, self.render_top_lors_func, self.toggle_grid_func = st.setup_crystal_visualization(
+        # This returns (update_event_counts_func, reload_sources_func, set_draw_mode_func, render_top_lors_func, toggle_scanner_func, toggle_grid_func, set_color_scheme_func)
+        self.update_event_counts_func, self.reload_sources_func, self.set_draw_mode_func, self.render_top_lors_func, self.toggle_scanner_func, self.toggle_grid_func, self.set_color_scheme_func = st.setup_crystal_visualization(
             self.plotter, 
             info_callback=update_crystal_info,
             selection_callback=update_connections_list,
@@ -181,6 +182,8 @@ class MainWindow(QMainWindow):
         file_menu.addAction("Import Event Counts...", self.import_event_counts)
         file_menu.addAction("Import Top LORs...", self.import_top_lors)
         file_menu.addSeparator()
+        file_menu.addAction("Export Scene as HTML...", self.export_scene_html)
+        file_menu.addSeparator()
         #file_menu.addAction("Exit", self.close)
         
         # View menu
@@ -189,10 +192,35 @@ class MainWindow(QMainWindow):
         view_menu.addAction("Zoom In", self.view_zoom_in)
         view_menu.addAction("Zoom Out", self.view_zoom_out)
         view_menu.addSeparator()
+        self.scanner_toggle_action = view_menu.addAction("Show Scanner")
+        self.scanner_toggle_action.setCheckable(True)
+        self.scanner_toggle_action.setChecked(True)  # Scanner is visible by default
+        self.scanner_toggle_action.triggered.connect(self.toggle_scanner)
         self.grid_toggle_action = view_menu.addAction("Show Grid")
         self.grid_toggle_action.setCheckable(True)
         self.grid_toggle_action.setChecked(True)  # Grid is visible by default
         self.grid_toggle_action.triggered.connect(self.toggle_grid)
+        view_menu.addSeparator()
+        
+        # Color scheme submenu
+        color_scheme_menu = view_menu.addMenu("Color Scheme")
+
+        
+        self.default_scheme_action = color_scheme_menu.addAction("Default")
+        self.default_scheme_action.setCheckable(True)
+        self.default_scheme_action.setChecked(True)
+        self.default_scheme_action.triggered.connect(lambda: self.set_color_scheme('default'))
+
+        self.viridis_scheme_action = color_scheme_menu.addAction("Viridis")
+        self.viridis_scheme_action.setCheckable(True)
+        self.viridis_scheme_action.triggered.connect(lambda: self.set_color_scheme('viridis'))
+        
+        # Create action group to ensure only one is checked at a time
+        self.color_scheme_group = QActionGroup(self)
+        self.color_scheme_group.addAction(self.default_scheme_action)
+        self.color_scheme_group.addAction(self.viridis_scheme_action)
+        self.color_scheme_group.setExclusive(True)
+        
         view_menu.addSeparator()
         #self.z_axis_lock_action = view_menu.addAction("Lock Rotation to Z-Axis")
         #self.z_axis_lock_action.setCheckable(True)
@@ -281,6 +309,46 @@ class MainWindow(QMainWindow):
         
     def file_open(self):
         print("File -> Open")
+    
+    def export_scene_html(self):
+        """Export the current PyVista scene as an HTML file"""
+        if not hasattr(self, 'plotter') or self.plotter is None:
+            QMessageBox.warning(
+                self,
+                "Export Error",
+                "Plotter not initialized. Cannot export scene."
+            )
+            return
+        
+        # Open file dialog to choose save location
+        file_path, _ = QFileDialog.getSaveFileName(
+            self,
+            "Export Scene as HTML",
+            "",
+            "HTML Files (*.html);;All Files (*.*)"
+        )
+        
+        if not file_path:
+            return  # User cancelled
+        
+        # Ensure .html extension
+        if not file_path.lower().endswith('.html'):
+            file_path += '.html'
+        
+        try:
+            # Export the scene to HTML
+            self.plotter.export_html(file_path)
+            QMessageBox.information(
+                self,
+                "Export Successful",
+                f"Scene successfully exported to:\n{file_path}"
+            )
+        except Exception as e:
+            QMessageBox.critical(
+                self,
+                "Export Error",
+                f"Failed to export scene to HTML:\n{str(e)}"
+            )
     
     def import_event_counts(self):
         """Import event counts from binary file"""
@@ -489,10 +557,27 @@ class MainWindow(QMainWindow):
             self.plotter.camera.zoom(0.8)
             self.plotter.render()
     
+    def toggle_scanner(self, checked):
+        """Toggle scanner visibility"""
+        if hasattr(self, "toggle_scanner_func") and self.toggle_scanner_func:
+            self.toggle_scanner_func(show=checked)
+    
     def toggle_grid(self, checked):
         """Toggle grid visibility"""
         if hasattr(self, "toggle_grid_func") and self.toggle_grid_func:
             self.toggle_grid_func(show=checked)
+    
+    def set_color_scheme(self, scheme_name):
+        """Change the color scheme of the visualization"""
+        if hasattr(self, "set_color_scheme_func") and self.set_color_scheme_func:
+            self.set_color_scheme_func(scheme_name)
+            # Update menu check states
+            if scheme_name == 'viridis':
+                self.viridis_scheme_action.setChecked(True)
+                self.default_scheme_action.setChecked(False)
+            elif scheme_name == 'default':
+                self.viridis_scheme_action.setChecked(False)
+                self.default_scheme_action.setChecked(True)
     
     def toggle_z_axis_lock(self, checked):
         """Toggle Z-axis rotation lock"""

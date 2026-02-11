@@ -3,7 +3,8 @@ import pyvista as pv
 import numpy as np
 import vtk
 import pandas as pd
-from tqdm import tqdm
+import mesh_cache
+import color_schemes
 
 # Default opacity for source vtps
 opacity = 0.25
@@ -51,6 +52,9 @@ def setup_crystal_visualization(plotter, csv_path=os.path.join(current_dir, 'TPP
     if source_vtps_dir is None:
         source_vtps_dir = os.path.join(os.path.dirname(__file__), 'source_vtps')
     
+    # Grid cache path
+    grid_vtp_path = os.path.join(os.path.dirname(__file__), 'grid.vtp')
+    
     combined_mesh = None
     hovered_crystal = None
     hover_scalars = None
@@ -62,8 +66,11 @@ def setup_crystal_visualization(plotter, csv_path=os.path.join(current_dir, 'TPP
     draw_mode = draw_mode_enabled
     grid_actors = []  # Track grid actors for toggling
     grid_visible = True  # Track grid visibility state
+    grid_mesh = None  # Cached grid mesh
+    grid_actor = None  # Single actor for the grid mesh
+    scanner_visible = True  # Track scanner visibility state
     
-    # Precompute face centers and angles for building connections or meshes
+    # Precompute face centers and angles for building connections
     face_center_rows = []
     for idx, row in map_df.iterrows():
         face_center = np.asarray([row.iloc[0], row.iloc[1], row.iloc[2]])
@@ -71,16 +78,11 @@ def setup_crystal_visualization(plotter, csv_path=os.path.join(current_dir, 'TPP
         face_centers_dict[idx] = face_center
         face_center_rows.append((idx, face_center, angle))
     
-    # Try loading cached mesh to avoid rebuild
-    if os.path.exists(vtp_path):
-        try:
-            cached_mesh = pv.read(vtp_path)
-            if 'crystal_id' in cached_mesh.cell_data:
-                combined_mesh = cached_mesh
-            else:
-                print(f"Cached mesh at {vtp_path} missing 'crystal_id'; rebuilding.")
-        except Exception as exc:
-            print(f"Failed to load cached mesh at {vtp_path}: {exc}")
+    # Load or build scanner mesh using mesh cache
+    combined_mesh = mesh_cache.get_scanner_mesh(csv_path, vtp_path=vtp_path, subsample=subsample)
+    
+    if combined_mesh is None:
+        raise RuntimeError("Failed to load or build scanner mesh")
     
     # Initialize event_counts as array of zeros if not provided
     if event_counts is None:
@@ -94,29 +96,8 @@ def setup_crystal_visualization(plotter, csv_path=os.path.join(current_dir, 'TPP
             # Truncate if too long
             event_counts = event_counts[:num_crystals]
         event_counts = np.asarray(event_counts, dtype=np.int32)
-    
-    # Build mesh if no valid cache was found
-    if combined_mesh is None:
-        crystal = pv.Box(bounds=(0, 15, -1.5, 1.5, -1.5, 1.5))
-        
-        for idx, face_center, angle in tqdm(face_center_rows):
-            crystal_copy = crystal.copy()
-            # Label cells with crystal index for picking/hover
-            crystal_copy.cell_data['crystal_id'] = np.full(crystal_copy.n_cells, idx, dtype=int)
-            # Translate crystal to face center
-            crystal_copy.translate(face_center, inplace=True)
-            # Rotate crystal around z axis by angle
-            crystal_copy.rotate_vector(np.array([0, 0, 1]), angle, point=face_center, inplace=True)
-            # Add crystal to combined mesh
-            combined_mesh = crystal_copy if combined_mesh is None else combined_mesh + crystal_copy
-        
-        # Save built mesh for faster subsequent launches
-        try:
-            combined_mesh.save(vtp_path)
-        except Exception as exc:
-            print(f"Warning: could not save cached mesh to {vtp_path}: {exc}")
 
-    def load_source_vtps(selected_paths=None, opacity=opacity):
+    def load_source_vtps(selected_paths=None):
         """
         Load and render VTP sources. If metadata (threshold_ratio, scalemax_ratio) is found,
         displays a colorbar with reversed plasma colormap.
@@ -165,16 +146,17 @@ def setup_crystal_visualization(plotter, csv_path=os.path.join(current_dir, 'TPP
                             scalemax_ratio = float(mesh.field_data['scalemax_ratio'][0] if isinstance(mesh.field_data['scalemax_ratio'], np.ndarray) else mesh.field_data['scalemax_ratio'])
                         except (IndexError, ValueError, TypeError) as e:
                             print(f"Warning: Could not parse metadata from {fpath}: {e}")
-                
+
+                print(mesh.cell_data['RGBA'])
+                print(mesh.cell_data['RGBA'].shape) 
                 actor = plotter.add_mesh(
                     mesh,
-                    #color='orange',
-                    opacity=0.25,
                     show_edges=False,
+                    #opacity=0.25,
                     name=f"source_{os.path.basename(fpath)}",
-                    show_scalar_bar=False,  # Hide color bar
-                    scalars = 'RGB',
-                    rgb = True
+                    show_scalar_bar=False,
+                    scalars='RGBA',
+                    rgb=True
                 )
                 source_mesh_actors.append(actor)
             except Exception as exc:
@@ -194,16 +176,16 @@ def setup_crystal_visualization(plotter, csv_path=os.path.join(current_dir, 'TPP
             dummy_mesh['scalars'] = np.linspace(0, 1, 100)
             
             # Add colorbar with reversed plasma colormap
-            actor = plotter.add_mesh(
-                dummy_mesh,
-                scalars='scalars',
-                cmap='plasma_r',  # Reversed plasma
-                clim=[threshold_ratio, scalemax_ratio],
-                show_scalar_bar=True,  # Enable colorbar
-                scalar_bar_args={'title': 'Intensity Ratio', 'n_labels': 2},
-                opacity=0.0,  # Make the dummy mesh invisible
-                name='colorbar_dummy'
-            )
+            # actor = plotter.add_mesh(
+            #     dummy_mesh,
+            #     scalars='scalars',
+            #     cmap='hot_r',  # Reversed hot
+            #     clim=[threshold_ratio, scalemax_ratio],
+            #     show_scalar_bar=True,  # Enable colorbar
+            #     scalar_bar_args={'title': 'Intensity Ratio', 'n_labels': 2},
+            #     opacity=0.0,  # Make the dummy mesh invisible
+            #     name='colorbar_dummy'
+            # )
             
             # Set font for the colorbar text
             scalar_bar = plotter.scalar_bar
@@ -241,15 +223,18 @@ def setup_crystal_visualization(plotter, csv_path=os.path.join(current_dir, 'TPP
     if event_count_max == 0:
         event_count_max = 1.0  # Avoid division by zero
     
+    # Use default scheme for initial setup
+    default_scheme = color_schemes.COLOR_SCHEMES['default']
+    
     combined_actor = plotter.add_mesh(
         combined_mesh,
         scalars='event_count',  # Use event counts for coloring
         clim=[event_count_min, event_count_max],
-        cmap='inferno',  # Heatmap colormap (can be changed to 'plasma', 'inferno', 'magma', etc.)
-        opacity=0.05,
+        cmap=default_scheme['crystal_cmap'],
+        opacity=default_scheme['crystal_opacity'],
         show_edges=True,
-        edge_color='black',
-        line_width=1,
+        edge_color=default_scheme['edge_color'],
+        line_width=2,
         pickable=True,
         show_scalar_bar=False,  # Hide color bar
         name='combined_prism'
@@ -552,128 +537,212 @@ def setup_crystal_visualization(plotter, csv_path=os.path.join(current_dir, 'TPP
     plotter.iren.add_observer("MouseMoveEvent", on_mouse_move)
     plotter.iren.add_observer("LeftButtonPressEvent", on_mouse_click)
     
-    # Setup plotter appearance
-    plotter.add_axes()
-    plotter.set_background('white')
+    # Setup plotter appearance using default scheme
+    plotter.add_axes(color=default_scheme['axes_color'])
+    plotter.set_background(default_scheme['background'])
     plotter.camera_position = 'iso'
     
+    # Track current grid color (use default scheme)
+    current_grid_color = default_scheme['grid_color']
+    
+    # Load or build grid mesh using mesh cache
+    grid_mesh = mesh_cache.get_grid_mesh(vtp_path=grid_vtp_path)
+    
     # Create XY grid plane at z = -55
-    def create_grid():
-        nonlocal grid_actors
-        # Clear existing grid
+    def create_grid(grid_color=None):
+        """Create or update the XY coordinate plane grid.
+        
+        Parameters
+        ----------
+        grid_color : str, optional
+            Color for grid lines. If None, uses current_grid_color.
+        """
+        nonlocal grid_actor, grid_actors, current_grid_color, grid_mesh
+        if grid_color is None:
+            grid_color = current_grid_color
+        else:
+            current_grid_color = grid_color
+        
+        # Remove existing grid actor if it exists
+        if grid_actor is not None:
+            try:
+                plotter.remove_actor(grid_actor)
+            except:
+                pass
+            grid_actor = None
+        
+        # Clear old grid_actors list (for backward compatibility)
         for actor in grid_actors:
             try:
-                plotter.remove_actor(actor)
+                plotter.renderer.RemoveViewProp(actor)
             except Exception:
                 pass
         grid_actors = []
         
-        z_level = -55
-        axis_range = 160
-        tick_spacing = 20
-        
-        # Create grid plane (semi-transparent)
-        plane = pv.Plane(center=(0, 0, z_level), direction=(0, 0, 1), 
-                        i_size=axis_range * 2, j_size=axis_range * 2, 
-                        i_resolution=1, j_resolution=1)
-        grid_plane_actor = plotter.add_mesh(
-            plane,
-            color='lightgray',
-            opacity=0.0,
-            show_edges=False,
-            name='grid_plane'
-        )
-        grid_actors.append(grid_plane_actor)
-        
-        # Draw grid lines every 20 units
-        # Vertical lines (parallel to Y axis)
-        for x in range(-axis_range, axis_range + 1, tick_spacing):
-            line = pv.Line(pointa=(x, -axis_range, z_level), 
-                          pointb=(x, axis_range, z_level))
-            line_actor = plotter.add_mesh(
-                line,
-                color='gray',
-                line_width=1,
-                name=f'grid_line_x_{x}'
+        # Add grid mesh with specified color
+        if grid_mesh is not None:
+            grid_actor = plotter.add_mesh(
+                grid_mesh,
+                color=grid_color,
+                line_width=1,  # Default line width (axes will be handled separately if needed)
+                name='grid_mesh'
             )
-            grid_actors.append(line_actor)
-        
-        # Horizontal lines (parallel to X axis)
-        for y in range(-axis_range, axis_range + 1, tick_spacing):
-            line = pv.Line(pointa=(-axis_range, y, z_level), 
-                          pointb=(axis_range, y, z_level))
-            line_actor = plotter.add_mesh(
-                line,
-                color='gray',
-                line_width=1,
-                name=f'grid_line_y_{y}'
-            )
-            grid_actors.append(line_actor)
-        
-        # Draw axes (thicker, darker lines)
-        # X axis
-        x_axis = pv.Line(pointa=(-axis_range, 0, z_level), 
-                        pointb=(axis_range, 0, z_level))
-        x_axis_actor = plotter.add_mesh(
-            x_axis,
-            color='black',
-            line_width=2,
-            name='grid_x_axis'
-        )
-        grid_actors.append(x_axis_actor)
-        
-        # Y axis
-        y_axis = pv.Line(pointa=(0, -axis_range, z_level), 
-                        pointb=(0, axis_range, z_level))
-        y_axis_actor = plotter.add_mesh(
-            y_axis,
-            color='black',
-            line_width=2,
-            name='grid_y_axis'
-        )
-        grid_actors.append(y_axis_actor)
+            grid_actors.append(grid_actor)
+            
+            # Set thicker line width for axes lines (last two lines in the mesh)
+            # Note: This is approximate - the last two lines should be the axes
+            # We can improve this by storing line type in cell_data if needed
+            mapper = grid_actor.GetMapper()
+            if mapper is not None:
+                # Try to set line width for specific cells (axes)
+                # For now, we'll use a uniform line width
+                pass
         
         plotter.render()
     
     def toggle_grid(show=None):
         """Toggle grid visibility. If show is None, toggles current state."""
-        nonlocal grid_actors, grid_visible
+        nonlocal grid_actor, grid_actors, grid_visible
         if show is None:
             show = not grid_visible
         else:
             grid_visible = bool(show)
         
         if show:
-            if not grid_actors:
+            if grid_actor is None:
+                # Grid hasn't been created yet, create it
                 create_grid()
             else:
-                # Show all grid actors
-                for actor in grid_actors:
-                    try:
-                        plotter.renderer.AddViewProp(actor)
-                    except:
-                        pass
+                # Show the grid actor
+                try:
+                    plotter.renderer.AddViewProp(grid_actor)
+                except:
+                    pass
             grid_visible = True
         else:
-            # Hide all grid actors
-            for actor in grid_actors:
+            # Hide the grid actor
+            if grid_actor is not None:
                 try:
-                    plotter.renderer.RemoveViewProp(actor)
+                    plotter.renderer.RemoveViewProp(grid_actor)
                 except:
                     pass
             grid_visible = False
         
         plotter.render()
     
-    # Create grid initially (visible by default)
-    create_grid()
+    def toggle_scanner(show=None):
+        """Toggle scanner visibility. If show is None, toggles current state."""
+        nonlocal combined_actor, scanner_visible
+        if show is None:
+            show = not scanner_visible
+        else:
+            scanner_visible = bool(show)
+        
+        if show:
+            # Show the scanner actor
+            if combined_actor is not None:
+                try:
+                    plotter.renderer.AddViewProp(combined_actor)
+                except:
+                    pass
+            scanner_visible = True
+        else:
+            # Hide the scanner actor
+            if combined_actor is not None:
+                try:
+                    plotter.renderer.RemoveViewProp(combined_actor)
+                except:
+                    pass
+            scanner_visible = False
+        
+        plotter.render()
+    
+    # Create grid initially (visible by default) using default scheme
+    create_grid(default_scheme['grid_color'])
+    
+    def set_color_scheme(scheme_name):
+        """Change the color scheme of the visualization.
+        
+        Parameters
+        ----------
+        scheme_name : str
+            Name of the color scheme ('viridis' or 'default')
+        """
+        nonlocal combined_actor, grid_actor, grid_actors, grid_visible, current_grid_color, event_count_scalars, original_event_count_scalars
+        
+        if scheme_name not in color_schemes.COLOR_SCHEMES:
+            print(f"Unknown color scheme: {scheme_name}")
+            return
+        
+        scheme = color_schemes.COLOR_SCHEMES[scheme_name]
+        
+        # Restore original scalars before recreating actor
+        if combined_mesh is not None and original_event_count_scalars is not None:
+            event_count_scalars[:] = original_event_count_scalars
+            combined_mesh.cell_data['event_count'] = event_count_scalars
+        
+        # Update crystal colormap and edge color by removing and re-adding
+        if combined_actor is not None:
+            plotter.remove_actor(combined_actor)
+            combined_actor = plotter.add_mesh(
+                combined_mesh,
+                scalars='event_count',
+                clim=[event_count_min, event_count_max],
+                cmap=scheme['crystal_cmap'],
+                opacity=scheme['crystal_opacity'],
+                show_edges=True,
+                edge_color=scheme['edge_color'],
+                line_width=2,
+                pickable=True,
+                show_scalar_bar=False,
+                name='combined_prism'
+            )
+        
+        # Update background
+        plotter.set_background(scheme['background'])
+        
+        # Update axes color
+        plotter.hide_axes()
+        plotter.add_axes(color=scheme['axes_color'])
+        plotter.show_axes()
+        
+        # Update grid color by updating the actor's color property
+        was_visible = grid_visible
+        current_grid_color = scheme['grid_color']
+        
+        if grid_actor is not None:
+            # Update the color of the existing grid actor
+            prop = grid_actor.GetProperty()
+            if prop is not None:
+                # Convert color string to RGB values
+                if isinstance(scheme['grid_color'], str):
+                    # Use VTK named colors
+                    colors = vtk.vtkNamedColors()
+                    rgb = colors.GetColor3d(scheme['grid_color'])
+                    prop.SetColor(rgb)
+                else:
+                    # Assume it's already RGB values
+                    prop.SetColor(scheme['grid_color'])
+        else:
+            # Grid hasn't been created yet, create it with new color
+            create_grid(scheme['grid_color'])
+            # Ensure visibility matches previous state
+            if not was_visible:
+                # Hide the newly created grid if it was hidden before
+                if grid_actor is not None:
+                    try:
+                        plotter.renderer.RemoveViewProp(grid_actor)
+                    except:
+                        pass
+        
+        plotter.render()
 
     # Return helper functions for external use
-    return update_event_counts, load_source_vtps, set_draw_mode, render_top_lors, toggle_grid
+    return update_event_counts, load_source_vtps, set_draw_mode, render_top_lors, toggle_scanner, toggle_grid, set_color_scheme
 
 
 # Standalone execution
 if __name__ == "__main__":
-    plotter = pv.Plotter()
+    plotter = pv.Plotter(lighting = 'none')
     setup_crystal_visualization(plotter)
     plotter.show()
