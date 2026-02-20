@@ -6,12 +6,9 @@ import pandas as pd
 import mesh_cache
 import color_schemes
 
-# Default opacity for source vtps
-opacity = 0.25
-
 current_dir = os.path.dirname(os.path.abspath(__file__))
 
-def setup_crystal_visualization(plotter, csv_path=os.path.join(current_dir, 'TPPT_Scanner_map_vis.csv'), subsample=1, info_callback=None, selection_callback=None, delete_connection_callback=None, status_callback=None, event_counts=None, vtp_path=None, source_vtps_dir=None, draw_mode_enabled=False):
+def setup_crystal_visualization(plotter, csv_path=os.path.join(current_dir, 'TPPT_Scanner_map_vis.csv'), subsample=1, info_callback=None, selection_callback=None, delete_connection_callback=None, status_callback=None, event_counts=None, vtp_path=None, draw_mode_enabled=False):
     """Setup crystal visualization on the given plotter
     
     Parameters:
@@ -37,9 +34,6 @@ def setup_crystal_visualization(plotter, csv_path=os.path.join(current_dir, 'TPP
     vtp_path : str, optional
         Path to cached VTP mesh. If present, load instead of rebuilding. If missing,
         the mesh is generated and saved to this path.
-    source_vtps_dir : str, optional
-        Directory containing source VTPs to render on top of the scanner. Defaults to
-        a 'source_vtps' folder next to this script.
     draw_mode_enabled : bool, optional
         If True, click-to-connect mode is active. Can be toggled at runtime via set_draw_mode.
     """
@@ -49,8 +43,6 @@ def setup_crystal_visualization(plotter, csv_path=os.path.join(current_dir, 'TPP
     # Resolve cache path for the pre-built mesh
     if vtp_path is None:
         vtp_path = os.path.join(os.path.dirname(__file__), 'tpptscanner.vtp')
-    if source_vtps_dir is None:
-        source_vtps_dir = os.path.join(os.path.dirname(__file__), 'source_vtps')
     
     # Grid cache path
     grid_vtp_path = os.path.join(os.path.dirname(__file__), 'grid.vtp')
@@ -97,108 +89,49 @@ def setup_crystal_visualization(plotter, csv_path=os.path.join(current_dir, 'TPP
             event_counts = event_counts[:num_crystals]
         event_counts = np.asarray(event_counts, dtype=np.int32)
 
-    def load_source_vtps(selected_paths=None):
+    # Counter for unique source mesh names
+    source_mesh_counter = 0
+
+    def add_source_meshes(meshes):
         """
-        Load and render VTP sources. If metadata (threshold_ratio, scalemax_ratio) is found,
-        displays a colorbar with reversed plasma colormap.
+        Add pre-built source meshes to the plotter (overlay, does not remove existing).
 
         Parameters
         ----------
-        selected_paths : list[str] or None
-            If provided, only these files are loaded. Otherwise, all .vtp files
-            in source_vtps_dir are loaded.
+        meshes : list[pyvista.PolyData]
+            Mesh objects to add (each should have 'RGBA' cell_data).
         """
+        nonlocal source_mesh_actors, source_mesh_counter
+        if meshes is None:
+            return
+
+        for mesh in meshes:
+            try:
+                actor = plotter.add_mesh(
+                    mesh,
+                    show_edges=False,
+                    name=f"source_mesh_{source_mesh_counter}",
+                    show_scalar_bar=False,
+                    scalars='RGBA',
+                    rgb=True
+                )
+                source_mesh_actors.append(actor)
+                source_mesh_counter += 1
+            except Exception as exc:
+                print(f"Failed to add source mesh: {exc}")
+
+        plotter.render()
+
+    def clear_source_meshes():
+        """Remove all source mesh actors from the plotter."""
         nonlocal source_mesh_actors
-        # Remove any previously added source actors
         for actor in source_mesh_actors:
             try:
                 plotter.remove_actor(actor)
             except Exception:
                 pass
         source_mesh_actors = []
-
-        paths = []
-        if selected_paths is not None:
-            paths = list(selected_paths)
-        else:
-            if not os.path.isdir(source_vtps_dir):
-                return {}
-            for fname in sorted(os.listdir(source_vtps_dir)):
-                if not fname.lower().endswith('.vtp'):
-                    continue
-                paths.append(os.path.join(source_vtps_dir, fname))
-
-        # Collect metadata for colorbar
-        threshold_ratio = None
-        scalemax_ratio = None
-        
-        for fpath in paths:
-            if not fpath.lower().endswith('.vtp'):
-                continue
-            try:
-                mesh = pv.read(fpath)
-                
-                # Read metadata if available (use first VTP with metadata for colorbar)
-                if threshold_ratio is None and hasattr(mesh, 'field_data') and mesh.field_data:
-                    if 'threshold_ratio' in mesh.field_data and 'scalemax_ratio' in mesh.field_data:
-                        try:
-                            threshold_ratio = float(mesh.field_data['threshold_ratio'][0] if isinstance(mesh.field_data['threshold_ratio'], np.ndarray) else mesh.field_data['threshold_ratio'])
-                            scalemax_ratio = float(mesh.field_data['scalemax_ratio'][0] if isinstance(mesh.field_data['scalemax_ratio'], np.ndarray) else mesh.field_data['scalemax_ratio'])
-                        except (IndexError, ValueError, TypeError) as e:
-                            print(f"Warning: Could not parse metadata from {fpath}: {e}")
-
-                print(mesh.cell_data['RGBA'])
-                print(mesh.cell_data['RGBA'].shape) 
-                actor = plotter.add_mesh(
-                    mesh,
-                    show_edges=False,
-                    #opacity=0.25,
-                    name=f"source_{os.path.basename(fpath)}",
-                    show_scalar_bar=False,
-                    scalars='RGBA',
-                    rgb=True
-                )
-                source_mesh_actors.append(actor)
-            except Exception as exc:
-                print(f"Failed to load source VTP {fpath}: {exc}")
-
-        # Add colorbar if metadata is available
-        if threshold_ratio is not None and scalemax_ratio is not None:
-            # Remove existing colorbar if any
-            try:
-                plotter.remove_scalar_bar()
-            except:
-                pass
-            
-            # Create a dummy mesh with scalars for the colorbar
-            # Use threshold_ratio as leftmost (min) and scalemax_ratio as rightmost (max)
-            dummy_mesh = pv.Plane(center=(0, 0, 0), direction=(0, 0, 1), i_size=1, j_size=1)
-            dummy_mesh['scalars'] = np.linspace(0, 1, 100)
-            
-            # Add colorbar with reversed plasma colormap
-            # actor = plotter.add_mesh(
-            #     dummy_mesh,
-            #     scalars='scalars',
-            #     cmap='hot_r',  # Reversed hot
-            #     clim=[threshold_ratio, scalemax_ratio],
-            #     show_scalar_bar=True,  # Enable colorbar
-            #     scalar_bar_args={'title': 'Intensity Ratio', 'n_labels': 2},
-            #     opacity=0.0,  # Make the dummy mesh invisible
-            #     name='colorbar_dummy'
-            # )
-            
-            # Set font for the colorbar text
-            scalar_bar = plotter.scalar_bar
-            if scalar_bar is not None:
-                # Set font family (arial, courier, or times)
-                scalar_bar.GetTitleTextProperty().SetFontFamilyToArial()
-                scalar_bar.GetLabelTextProperty().SetFontFamilyToArial()
-                # Set font size
-                scalar_bar.GetTitleTextProperty().SetFontSize(14)
-                scalar_bar.GetLabelTextProperty().SetFontSize(12)
-
         plotter.render()
-        return {}  # Return empty dict for compatibility
 
     
     # Create event count scalars: map each cell's crystal_id to its event count
@@ -738,7 +671,7 @@ def setup_crystal_visualization(plotter, csv_path=os.path.join(current_dir, 'TPP
         plotter.render()
 
     # Return helper functions for external use
-    return update_event_counts, load_source_vtps, set_draw_mode, render_top_lors, toggle_scanner, toggle_grid, set_color_scheme
+    return update_event_counts, add_source_meshes, clear_source_meshes, set_draw_mode, render_top_lors, toggle_scanner, toggle_grid, set_color_scheme
 
 
 # Standalone execution

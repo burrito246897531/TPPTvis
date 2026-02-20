@@ -1,7 +1,8 @@
 # Color scheme presets
 COLOR_SCHEMES = {
     'default': {
-        'crystal_cmap': 'inferno',
+        'crystal_cmap': 'inferno_r',
+        'source_cmap': 'inferno_r',
         'background': 'white',
         'axes_color': 'black',
         'edge_color': 'black',
@@ -10,6 +11,7 @@ COLOR_SCHEMES = {
     },
     'viridis': {
         'crystal_cmap': 'viridis',
+        'source_cmap': 'viridis',
         'background': [0.267004, 0.004874, 0.329415],  # viridis purple
         'axes_color': 'white',
         'edge_color': 'white',

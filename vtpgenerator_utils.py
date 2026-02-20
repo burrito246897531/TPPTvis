@@ -104,7 +104,8 @@ def generate_rectangular_prism_mesh(x, y, z, l, w, h, color=default_color, opaci
 
 def castor_mesh(img_path, hdr_path, prop=0.001, trim=3, color_map = 'viridis', opacity_map_func = get_opacity_08cubic):
     """
-    Create a mesh of voxels from CASToR reconstructed image.
+    Create a mesh of voxels from CASToR reconstructed image. This function is deprecated, TPPTvis now has functionality
+    to generate CASToR meshes from .hdr/.img files within the app using thresholded surfaces.
 
     Parameters ----------
     img_path : str

@@ -4,10 +4,11 @@ Includes: Menu bar, Sidebar, and PyVista plotter window
 """
 import os
 import sys
-import shutil
 import pyvista as pv
 import numpy as np
 import scannertest as st
+import voxel_img_utils as viu
+import color_schemes
 import vtk
 
 try:
@@ -15,7 +16,8 @@ try:
                                     QHBoxLayout, QMenuBar, QMenu, QDockWidget, 
                                     QListWidget, QPushButton, QLabel, QTextEdit, 
                                     QListWidgetItem, QScrollArea, QFileDialog, QMessageBox,
-                                    QSpinBox)
+                                    QSpinBox, QDialog, QDoubleSpinBox, QFormLayout,
+                                    QDialogButtonBox)
     from PySide6.QtGui import QActionGroup
     from PySide6.QtCore import Qt, QTimer
     from pyvistaqt import QtInteractor
@@ -55,8 +57,12 @@ class MainWindow(QMainWindow):
         # Store loaded LOR data for re-rendering when top N changes
         self.loaded_lor_data = None
         
-        # Store metadata for loaded source VTPs (dict mapping filepath -> metadata dict)
-        self.source_vtp_metadata = {}
+        # Track current color scheme name and stored import data for re-rendering
+        self.current_color_scheme = 'default'
+        self.castor_import_params = []  # list of dicts: {'hdr_path', 'prop', 'trim', 'num_bins'}
+        self.loaded_vtp_meshes = []    # list of pyvista.PolyData (color-scheme-independent)
+        
+
 
         # Debounce timer for top-N LOR rendering
         self.top_n_timer = QTimer(self)
@@ -156,8 +162,14 @@ class MainWindow(QMainWindow):
             pass  # Instructions label was removed, so this is a no-op
         
         # Load crystal visualization from scannertest with callbacks
-        # This returns (update_event_counts_func, reload_sources_func, set_draw_mode_func, render_top_lors_func, toggle_scanner_func, toggle_grid_func, set_color_scheme_func)
-        self.update_event_counts_func, self.reload_sources_func, self.set_draw_mode_func, self.render_top_lors_func, self.toggle_scanner_func, self.toggle_grid_func, self.set_color_scheme_func = st.setup_crystal_visualization(
+        (self.update_event_counts_func,
+         self.add_sources_func,
+         self.clear_sources_func,
+         self.set_draw_mode_func,
+         self.render_top_lors_func,
+         self.toggle_scanner_func,
+         self.toggle_grid_func,
+         self.set_color_scheme_func) = st.setup_crystal_visualization(
             self.plotter, 
             info_callback=update_crystal_info,
             selection_callback=update_connections_list,
@@ -178,11 +190,10 @@ class MainWindow(QMainWindow):
         #file_menu.addAction("New", self.file_new)
         #file_menu.addAction("Open", self.file_open)
         file_menu.addSeparator()
+        file_menu.addAction("Import CASToR Image...", self.import_castor_image)
         file_menu.addAction("Import Source VTPs...", self.import_source_vtps)
         file_menu.addAction("Import Event Counts...", self.import_event_counts)
         file_menu.addAction("Import Top LORs...", self.import_top_lors)
-        file_menu.addSeparator()
-        file_menu.addAction("Export Scene as HTML...", self.export_scene_html)
         file_menu.addSeparator()
         #file_menu.addAction("Exit", self.close)
         
@@ -191,6 +202,8 @@ class MainWindow(QMainWindow):
         view_menu.addAction("Reset View", self.view_reset)
         view_menu.addAction("Zoom In", self.view_zoom_in)
         view_menu.addAction("Zoom Out", self.view_zoom_out)
+        view_menu.addSeparator()
+        view_menu.addAction("Clear Meshes", self.clear_all_source_meshes)
         view_menu.addSeparator()
         self.scanner_toggle_action = view_menu.addAction("Show Scanner")
         self.scanner_toggle_action.setCheckable(True)
@@ -310,46 +323,6 @@ class MainWindow(QMainWindow):
     def file_open(self):
         print("File -> Open")
     
-    def export_scene_html(self):
-        """Export the current PyVista scene as an HTML file"""
-        if not hasattr(self, 'plotter') or self.plotter is None:
-            QMessageBox.warning(
-                self,
-                "Export Error",
-                "Plotter not initialized. Cannot export scene."
-            )
-            return
-        
-        # Open file dialog to choose save location
-        file_path, _ = QFileDialog.getSaveFileName(
-            self,
-            "Export Scene as HTML",
-            "",
-            "HTML Files (*.html);;All Files (*.*)"
-        )
-        
-        if not file_path:
-            return  # User cancelled
-        
-        # Ensure .html extension
-        if not file_path.lower().endswith('.html'):
-            file_path += '.html'
-        
-        try:
-            # Export the scene to HTML
-            self.plotter.export_html(file_path)
-            QMessageBox.information(
-                self,
-                "Export Successful",
-                f"Scene successfully exported to:\n{file_path}"
-            )
-        except Exception as e:
-            QMessageBox.critical(
-                self,
-                "Export Error",
-                f"Failed to export scene to HTML:\n{str(e)}"
-            )
-    
     def import_event_counts(self):
         """Import event counts from binary file"""
         file_path, _ = QFileDialog.getOpenFileName(
@@ -407,81 +380,162 @@ class MainWindow(QMainWindow):
                     f"Failed to import event counts:\n{str(e)}"
                 )
 
+    def import_castor_image(self):
+        """Import one or more CASToR .hdr files, generate meshes, and render them."""
+        file_paths, _ = QFileDialog.getOpenFileNames(
+            self,
+            "Import CASToR Image",
+            "",
+            "CASToR Header Files (*.hdr);;All Files (*.*)"
+        )
+
+        if not file_paths:
+            return
+
+        # Show settings dialog
+        dialog = QDialog(self)
+        dialog.setWindowTitle("CASToR Import Settings")
+        form = QFormLayout(dialog)
+
+        prop_spin = QDoubleSpinBox()
+        prop_spin.setDecimals(4)
+        prop_spin.setRange(0.0001, 1.0)
+        prop_spin.setSingleStep(0.001)
+        prop_spin.setValue(0.001)
+        form.addRow("Prop:", prop_spin)
+
+        trim_spin = QSpinBox()
+        trim_spin.setRange(0, 256)
+        trim_spin.setValue(0)
+        form.addRow("Trim:", trim_spin)
+
+        bins_spin = QSpinBox()
+        bins_spin.setRange(1, 50)
+        bins_spin.setValue(5)
+        form.addRow("Num Bins:", bins_spin)
+
+        buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        buttons.accepted.connect(dialog.accept)
+        buttons.rejected.connect(dialog.reject)
+        form.addRow(buttons)
+
+        if dialog.exec() != QDialog.Accepted:
+            return
+
+        prop = prop_spin.value()
+        trim = trim_spin.value()
+        num_bins = bins_spin.value()
+
+        # Get colormap from current color scheme
+        scheme = color_schemes.COLOR_SCHEMES.get(self.current_color_scheme, {})
+        cmap_name = scheme.get('source_cmap', 'viridis')
+
+        # Store import params for re-rendering on color scheme change
+        self.castor_import_params = [
+            {'hdr_path': p, 'prop': prop, 'trim': trim, 'num_bins': num_bins}
+            for p in file_paths
+        ]
+
+        meshes, errors = self._generate_castor_meshes(cmap_name)
+
+        # Add generated meshes to the plotter (overlay)
+        if meshes and getattr(self, "add_sources_func", None):
+            try:
+                self.add_sources_func(meshes)
+            except Exception as exc:
+                errors.append(f"Render failed: {exc}")
+
+        if errors:
+            QMessageBox.warning(
+                self,
+                "Import CASToR Image",
+                f"Loaded {len(meshes)} mesh(es) with some errors:\n" + "\n".join(errors)
+            )
+        elif meshes:
+            QMessageBox.information(
+                self,
+                "Import CASToR Image",
+                f"Successfully imported {len(meshes)} CASToR image(s)."
+            )
+
     def import_source_vtps(self):
-        """Import one or more source VTP files and reload the scene."""
+        """Import one or more .vtp files and overlay them on the scene."""
         file_paths, _ = QFileDialog.getOpenFileNames(
             self,
             "Import Source VTPs",
             "",
             "VTP Files (*.vtp);;All Files (*.*)"
         )
-
         if not file_paths:
             return
 
-        dest_dir = os.path.join(os.path.dirname(__file__), "source_vtps")
-        os.makedirs(dest_dir, exist_ok=True)
-
-        copied = 0
+        meshes = []
         errors = []
-        copied_paths = []
         for fpath in file_paths:
             try:
-                fname = os.path.basename(fpath)
-                dest = os.path.join(dest_dir, fname)
-                # If destination already exists and is the same file, count it as imported and keep using it
-                if os.path.exists(dest):
-                    try:
-                        if os.path.samefile(fpath, dest):
-                            copied += 1
-                            copied_paths.append(dest)
-                            continue
-                    except OSError:
-                        # If samefile check fails (e.g., across filesystems), proceed with copy/overwrite
-                        pass
-                # Copy or overwrite the file
-                shutil.copyfile(fpath, dest)
-                copied += 1
-                copied_paths.append(dest)
+                mesh = pv.read(fpath)
+                meshes.append(mesh)
             except Exception as exc:
-                errors.append(f"{fpath}: {exc}")
+                errors.append(f"{os.path.basename(fpath)}: {exc}")
 
-        # Reload sources on success
-        if copied > 0 and getattr(self, "reload_sources_func", None):
-            try:
-                self.reload_sources_func(selected_paths=copied_paths)
-            except Exception as exc:
-                errors.append(f"Reload failed: {exc}")
+        if meshes:
+            # Store for re-adding after color scheme change
+            self.loaded_vtp_meshes.extend(meshes)
+            if getattr(self, "add_sources_func", None):
+                try:
+                    self.add_sources_func(meshes)
+                except Exception as exc:
+                    errors.append(f"Render failed: {exc}")
 
         if errors:
             QMessageBox.warning(
                 self,
-                "Import Sources",
-                f"Imported {copied} file(s) with some errors:\n" + "\n".join(errors)
+                "Import Source VTPs",
+                f"Loaded {len(meshes)} VTP(s) with some errors:\n" + "\n".join(errors)
             )
-        else:
+        elif meshes:
             QMessageBox.information(
                 self,
-                "Import Sources",
-                f"Successfully imported {copied} source VTP file(s)."
+                "Import Source VTPs",
+                f"Successfully imported {len(meshes)} VTP file(s)."
             )
-    
-    def get_source_vtp_metadata(self, filepath):
-        """
-        Get metadata for a source VTP file.
+
+    def clear_all_source_meshes(self):
+        """Remove all source meshes (CASToR + VTP) from the scene and clear stored data."""
+        self.castor_import_params = []
+        self.loaded_vtp_meshes = []
+        if getattr(self, "clear_sources_func", None):
+            try:
+                self.clear_sources_func()
+            except Exception as exc:
+                print(f"Failed to clear source meshes: {exc}")
+
+    def _generate_castor_meshes(self, cmap_name):
+        """Generate CASToR meshes from stored import params with the given colormap.
         
-        Parameters
-        ----------
-        filepath : str
-            Path to the VTP file
-            
         Returns
         -------
-        dict or None
-            Dictionary with 'threshold_ratio' and 'scalemax_ratio' if available,
-            or None if metadata not found.
+        (list[pv.PolyData], list[str])
+            Tuple of (meshes, errors).
         """
-        return self.source_vtp_metadata.get(filepath, None)
+        meshes = []
+        errors = []
+        for params in self.castor_import_params:
+            try:
+                mesh = viu.get_castor_mesh_from_img(
+                    params['hdr_path'],
+                    prop=params['prop'],
+                    trim=params['trim'],
+                    num_bins=params['num_bins'],
+                    color_map=cmap_name
+                )
+                if mesh is not None:
+                    meshes.append(mesh)
+                else:
+                    errors.append(f"{params['hdr_path']}: mesh generation returned None")
+            except Exception as exc:
+                errors.append(f"{os.path.basename(params['hdr_path'])}: {exc}")
+        return meshes, errors
 
     def import_top_lors(self):
         """Import a Top LORs int16 binary file and render top-N pairs (expects 1000x3)."""
@@ -569,6 +623,8 @@ class MainWindow(QMainWindow):
     
     def set_color_scheme(self, scheme_name):
         """Change the color scheme of the visualization"""
+        self.current_color_scheme = scheme_name
+        
         if hasattr(self, "set_color_scheme_func") and self.set_color_scheme_func:
             self.set_color_scheme_func(scheme_name)
             # Update menu check states
@@ -578,6 +634,34 @@ class MainWindow(QMainWindow):
             elif scheme_name == 'default':
                 self.viridis_scheme_action.setChecked(False)
                 self.default_scheme_action.setChecked(True)
+        
+        # Re-render all source meshes (CASToR with new cmap, VTPs unchanged)
+        has_sources = self.castor_import_params or self.loaded_vtp_meshes
+        if has_sources and getattr(self, "clear_sources_func", None):
+            try:
+                self.clear_sources_func()
+            except Exception:
+                pass
+
+            all_meshes = []
+
+            # Regenerate CASToR meshes with new colormap
+            if self.castor_import_params:
+                scheme = color_schemes.COLOR_SCHEMES.get(scheme_name, {})
+                cmap_name = scheme.get('source_cmap', 'viridis')
+                castor_meshes, errors = self._generate_castor_meshes(cmap_name)
+                all_meshes.extend(castor_meshes)
+                for err in errors:
+                    print(f"Source re-render error: {err}")
+
+            # Re-add VTP meshes (unchanged)
+            all_meshes.extend(self.loaded_vtp_meshes)
+
+            if all_meshes and getattr(self, "add_sources_func", None):
+                try:
+                    self.add_sources_func(all_meshes)
+                except Exception as exc:
+                    print(f"Failed to re-render sources on scheme change: {exc}")
     
     def toggle_z_axis_lock(self, checked):
         """Toggle Z-axis rotation lock"""
