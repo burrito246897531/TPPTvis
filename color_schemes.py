@@ -17,6 +17,15 @@ COLOR_SCHEMES = {
         'edge_color': 'white',
         'grid_color': 'white',
         'crystal_opacity': 0.20
+    },
+    'grayscale': {
+        'crystal_cmap': 'gist_gray',
+        'source_cmap': 'gist_gray',
+        'background': 'black',
+        'axes_color': 'white',
+        'edge_color': 'white',
+        'grid_color': 'white',
+        'crystal_opacity': 0.80
     }
 }
 
